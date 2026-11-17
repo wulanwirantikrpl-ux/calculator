@@ -100,6 +100,16 @@
 </button>
 </div>
 </div>
+<!-- STATE C: Subnet Error State Guidance Banner (shown when Error occurs) -->
+<div class="hidden bg-error-container p-space-md rounded-xl text-on-error-container space-y-1" id="subnet-state-error-banner">
+<div class="flex items-center gap-2 font-title-md text-title-md">
+<span class="material-symbols-outlined text-[20px]">error_outline</span>
+<span id="subnet-error-title">Kesalahan Validasi Input</span>
+</div>
+<p class="font-body-sm text-body-sm font-medium" id="subnet-error-detail">
+        Terjadi kesalahan validasi input.
+</p>
+</div>
 <!-- STATE A: Subnet Success Card -->
 <div class="flex flex-col space-y-space-sm" id="subnet-state-success">
 <!-- Bit Breakdown Educational Bar -->
@@ -216,16 +226,6 @@
 <span class="material-symbols-outlined text-[18px]">play_arrow</span>
 <span>Try Standard /24 Class C</span>
 </button>
-</div>
-<!-- STATE C: Subnet Error State Guidance Banner (shown when Error mode is picked) -->
-<div class="hidden bg-error-container p-space-md rounded-xl text-on-error-container space-y-1" id="subnet-state-error-banner">
-<div class="flex items-center gap-2 font-title-md text-title-md">
-<span class="material-symbols-outlined text-[20px]">error_outline</span>
-<span>Input Validation Errors Detected</span>
-</div>
-<p class="font-body-sm text-body-sm">
-        Please correct the highlighted inputs above. Subnet calculations require standard dotted-decimal octets (0-255) and CIDR prefixes between 0 and 32.
-      </p>
 </div>
 </section>
 <!-- ======================================================== -->
@@ -506,6 +506,8 @@
       subnetSuccess.classList.add('hidden');
       subnetEmpty.classList.add('hidden');
       subnetErrorBanner.classList.remove('hidden');
+      const errDetail = document.getElementById('subnet-error-detail');
+      if (errDetail) errDetail.textContent = 'Oktet IP harus berada dalam rentang 0-255.';
       subnetIpInput.value = '192.289.10.45';
       subnetIpErr.classList.remove('hidden');
       subnetPrefixInput.value = '35';
@@ -536,6 +538,7 @@
       if (!vlsmSupernetInput.value) {
         vlsmSupernetInput.value = '192.168.1.0/24';
       }
+      handleSubnetCalculate();
     }
   }
 
@@ -545,85 +548,79 @@
     handleSubnetCalculate();
   }
 
-  function handleSubnetCalculate() {
-    const ip = document.getElementById('subnet-ip-input').value.trim();
-    const prefix = parseInt(document.getElementById('subnet-prefix-input').value, 10);
+  async function handleSubnetCalculate() {
+    const ipInput = document.getElementById('subnet-ip-input');
+    const prefixInput = document.getElementById('subnet-prefix-input');
+    const ip = ipInput ? ipInput.value : '';
+    const prefix = prefixInput ? prefixInput.value : '';
+
+    const subnetSuccess = document.getElementById('subnet-state-success');
+    const subnetEmpty = document.getElementById('subnet-state-empty');
+    const subnetErrorBanner = document.getElementById('subnet-state-error-banner');
+    const subnetErrorDetail = document.getElementById('subnet-error-detail');
     const ipErr = document.getElementById('subnet-ip-error');
     const prefixErr = document.getElementById('subnet-prefix-error');
 
-    // Validation
-    const octets = ip.split('.');
-    let hasIpError = false;
+    if (subnetEmpty) subnetEmpty.classList.add('hidden');
 
-    if (octets.length !== 4) {
-      hasIpError = true;
-      document.getElementById('subnet-ip-error-msg').textContent = 'Invalid IPv4 format: Address must have 4 octets.';
-    } else {
-      for (let i = 0; i < 4; i++) {
-        const val = parseInt(octets[i], 10);
-        if (isNaN(val) || val < 0 || val > 255 || octets[i].trim() === '') {
-          hasIpError = true;
-          document.getElementById('subnet-ip-error-msg').textContent = `Invalid IPv4 address: Octet ${i + 1} must be between 0 and 255 (found '${octets[i]}').`;
-          break;
+    try {
+      const response = await fetch(`/api/subnet?ip=${encodeURIComponent(ip)}&prefix=${encodeURIComponent(prefix)}`);
+      const data = await response.json();
+
+      if (!response.ok) {
+        // Kesalahan validasi dari API (HTTP 400)
+        if (subnetSuccess) subnetSuccess.classList.add('hidden');
+        if (subnetErrorBanner) {
+          subnetErrorBanner.classList.remove('hidden');
+          if (subnetErrorDetail) {
+            subnetErrorDetail.textContent = data.detail || 'Terjadi kesalahan pada input.';
+          }
+        }
+        return;
+      }
+
+      // Sukses dari API (HTTP 200)
+      if (subnetErrorBanner) subnetErrorBanner.classList.add('hidden');
+      if (ipErr) ipErr.classList.add('hidden');
+      if (prefixErr) prefixErr.classList.add('hidden');
+      if (subnetSuccess) subnetSuccess.classList.remove('hidden');
+
+      // Tampilkan hasil dari respons API
+      document.getElementById('res-subnet-mask').textContent = data.mask;
+      if (data.mask) {
+        const wildcard = data.mask.split('.').map(o => 255 - Number(o)).join('.');
+        document.getElementById('res-wildcard-mask').textContent = wildcard;
+      }
+      document.getElementById('res-network-id').textContent = data.network;
+      document.getElementById('res-broadcast-ip').textContent = data.broadcast !== null ? data.broadcast : '- (Point-to-Point)';
+      document.getElementById('res-first-host').textContent = data.first_host;
+      document.getElementById('res-last-host').textContent = data.last_host;
+      document.getElementById('res-usable-count').textContent = `${data.usable_hosts.toLocaleString()} hosts`;
+
+      const prefixNum = parseInt(prefix, 10);
+      const totalIps = prefixNum === 32 ? 1 : Math.pow(2, 32 - prefixNum);
+      document.getElementById('res-total-ips').textContent = `${totalIps.toLocaleString()} IPs`;
+
+      // Bit bar updates
+      if (!isNaN(prefixNum)) {
+        const netPercent = (prefixNum / 32) * 100;
+        const hostPercent = 100 - netPercent;
+        const bitNet = document.getElementById('subnet-bitbar-net');
+        const bitHost = document.getElementById('subnet-bitbar-host');
+        if (bitNet) bitNet.style.width = netPercent + '%';
+        if (bitHost) bitHost.style.width = hostPercent + '%';
+        document.getElementById('subnet-netbits-label').textContent = `Network: ${prefixNum} bits (Prefix)`;
+        document.getElementById('subnet-hostbits-label').textContent = `Hosts: ${32 - prefixNum} bits (32 - ${prefixNum})`;
+      }
+    } catch (err) {
+      if (subnetSuccess) subnetSuccess.classList.add('hidden');
+      if (subnetErrorBanner) {
+        subnetErrorBanner.classList.remove('hidden');
+        if (subnetErrorDetail) {
+          subnetErrorDetail.textContent = 'Gagal menghubungi server API: ' + err.message;
         }
       }
     }
-
-    const hasPrefixError = isNaN(prefix) || prefix < 0 || prefix > 32;
-
-    if (hasIpError || hasPrefixError) {
-      ipErr.classList.toggle('hidden', !hasIpError);
-      prefixErr.classList.toggle('hidden', !hasPrefixError);
-      setGlobalDemoState('error');
-      return;
-    }
-
-    ipErr.classList.add('hidden');
-    prefixErr.classList.add('hidden');
-
-    // Calculate actual IPv4 values
-    calculateSubnetValues(ip, prefix);
-    setGlobalDemoState('success');
-  }
-
-  function calculateSubnetValues(ipStr, prefix) {
-    const octets = ipStr.split('.').map(Number);
-    const ipNum = ((octets[0] << 24) >>> 0) + (octets[1] << 16) + (octets[2] << 8) + octets[3];
-    const maskNum = prefix === 0 ? 0 : ((0xFFFFFFFF << (32 - prefix)) >>> 0);
-    const wildcardNum = (~maskNum) >>> 0;
-    const netNum = (ipNum & maskNum) >>> 0;
-    const bcastNum = (netNum | wildcardNum) >>> 0;
-
-    const numToIp = (num) => [
-      (num >>> 24) & 255,
-      (num >>> 16) & 255,
-      (num >>> 8) & 255,
-      num & 255
-    ].join('.');
-
-    const totalIps = Math.pow(2, 32 - prefix);
-    const usableHosts = prefix >= 31 ? (prefix === 31 ? 2 : 1) : Math.max(0, totalIps - 2);
-
-    document.getElementById('res-subnet-mask').textContent = numToIp(maskNum);
-    document.getElementById('res-wildcard-mask').textContent = numToIp(wildcardNum);
-    document.getElementById('res-network-id').textContent = numToIp(netNum);
-    document.getElementById('res-broadcast-ip').textContent = numToIp(bcastNum);
-
-    const firstHostNum = prefix >= 31 ? netNum : netNum + 1;
-    const lastHostNum = prefix >= 31 ? bcastNum : bcastNum - 1;
-
-    document.getElementById('res-first-host').textContent = numToIp(firstHostNum);
-    document.getElementById('res-last-host').textContent = numToIp(lastHostNum);
-    document.getElementById('res-usable-count').textContent = `${usableHosts.toLocaleString()} hosts`;
-    document.getElementById('res-total-ips').textContent = `${totalIps.toLocaleString()} IPs`;
-
-    // Bit bar updates
-    const netPercent = (prefix / 32) * 100;
-    const hostPercent = 100 - netPercent;
-    document.getElementById('subnet-bitbar-net').style.width = netPercent + '%';
-    document.getElementById('subnet-bitbar-host').style.width = hostPercent + '%';
-    document.getElementById('subnet-netbits-label').textContent = `Network: ${prefix} bits (Prefix)`;
-    document.getElementById('subnet-hostbits-label').textContent = `Hosts: ${32 - prefix} bits (32 - ${prefix})`;
   }
 
   function renderVlsmReqList() {
