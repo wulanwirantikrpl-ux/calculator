@@ -122,3 +122,13 @@ def api_subnet(request: Request):
         return JSONResponse(status_code=200, content=result)
     except ValueError as e:
         return JSONResponse(status_code=400, content={"detail": str(e)})
+
+
+def alokasi_vlsm(network_cidr: str, kebutuhan_host: list[int]) -> list[dict]:
+    raise NotImplementedError
+
+
+@app.post("/api/vlsm")
+def api_vlsm(request: Request):
+    raise NotImplementedError
+
