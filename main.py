@@ -1,3 +1,4 @@
+import math
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -86,6 +87,77 @@ def hitung_subnet(ip: str, prefix: int) -> dict:
     }
 
 
+def alokasi_vlsm(network_cidr: str, kebutuhan_host: list[int]) -> list[dict]:
+    if not isinstance(network_cidr, str) or isinstance(network_cidr, bool):
+        raise ValueError("Network CIDR harus berupa string.")
+    if " " in network_cidr:
+        raise ValueError("Network CIDR tidak boleh mengandung spasi.")
+    parts = network_cidr.split("/")
+    if len(parts) != 2:
+        raise ValueError("Network CIDR harus berformat <ip>/<prefix>.")
+    ip_str, prefix_str = parts[0], parts[1]
+    if not prefix_str.isdigit():
+        raise ValueError("Prefix CIDR harus berupa bilangan bulat.")
+    parent_prefix = int(prefix_str)
+    validate_prefix(parent_prefix)
+    parent_octets = validate_ip(ip_str)
+    parent_ip_int = (parent_octets[0] << 24) | (parent_octets[1] << 16) | (parent_octets[2] << 8) | parent_octets[3]
+
+    if parent_prefix == 0:
+        parent_mask_int = 0
+    else:
+        parent_mask_int = ((0xFFFFFFFF << (32 - parent_prefix)) & 0xFFFFFFFF)
+
+    parent_net_int = parent_ip_int & parent_mask_int
+    if parent_ip_int != parent_net_int:
+        raise ValueError(f"'{ip_str}' bukan merupakan Network Address yang valid untuk prefix /{parent_prefix}.")
+
+    if not isinstance(kebutuhan_host, list) or len(kebutuhan_host) == 0:
+        raise ValueError("Daftar kebutuhan host tidak boleh kosong.")
+
+    for h in kebutuhan_host:
+        if isinstance(h, bool) or not isinstance(h, int) or h < 1:
+            raise ValueError("Setiap kebutuhan host harus berupa bilangan bulat >= 1.")
+
+    if parent_prefix == 0:
+        parent_broadcast_int = 0xFFFFFFFF
+    else:
+        parent_broadcast_int = parent_net_int | (~parent_mask_int & 0xFFFFFFFF)
+
+    sorted_kebutuhan = sorted(kebutuhan_host, reverse=True)
+    current_ip_int = parent_net_int
+    results = []
+
+    for kebutuhan in sorted_kebutuhan:
+        needed = kebutuhan + 2
+        ukuran_blok = 4
+        while ukuran_blok < needed:
+            ukuran_blok *= 2
+
+        prefix_baru = 32 - int(math.log2(ukuran_blok))
+
+        if current_ip_int + ukuran_blok - 1 > parent_broadcast_int:
+            raise ValueError("Kapasitas jaringan induk tidak mencukupi untuk seluruh kebutuhan host.")
+
+        current_ip_str = int_to_ip(current_ip_int)
+        subnet_detail = hitung_subnet(current_ip_str, prefix_baru)
+
+        results.append({
+            "kebutuhan": kebutuhan,
+            "network_cidr": f"{subnet_detail['network']}/{prefix_baru}",
+            "mask": subnet_detail["mask"],
+            "network": subnet_detail["network"],
+            "broadcast": subnet_detail["broadcast"],
+            "first_host": subnet_detail["first_host"],
+            "last_host": subnet_detail["last_host"],
+            "usable_hosts": subnet_detail["usable_hosts"],
+        })
+
+        current_ip_int += ukuran_blok
+
+    return results
+
+
 @app.exception_handler(ValueError)
 async def value_error_handler(request: Request, exc: ValueError):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
@@ -124,11 +196,26 @@ def api_subnet(request: Request):
         return JSONResponse(status_code=400, content={"detail": str(e)})
 
 
-def alokasi_vlsm(network_cidr: str, kebutuhan_host: list[int]) -> list[dict]:
-    raise NotImplementedError
-
-
 @app.post("/api/vlsm")
-def api_vlsm(request: Request):
-    raise NotImplementedError
+async def api_vlsm(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"detail": "Payload body harus berupa JSON yang valid."})
 
+    if not isinstance(body, dict):
+        return JSONResponse(status_code=400, content={"detail": "Payload JSON harus berupa objek."})
+
+    network = body.get("network")
+    kebutuhan_host = body.get("kebutuhan_host")
+
+    if network is None:
+        return JSONResponse(status_code=400, content={"detail": "Field 'network' wajib diisi."})
+    if kebutuhan_host is None:
+        return JSONResponse(status_code=400, content={"detail": "Field 'kebutuhan_host' wajib diisi."})
+
+    try:
+        result = alokasi_vlsm(network, kebutuhan_host)
+        return JSONResponse(status_code=200, content=result)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"detail": str(e)})
