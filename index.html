@@ -277,6 +277,16 @@
 </button>
 </div>
 </div>
+<!-- STATE C: VLSM Error State Container -->
+<div class="hidden bg-error-container p-space-md rounded-xl text-on-error-container space-y-2" id="vlsm-state-error-banner">
+<div class="flex items-center gap-2 font-title-md text-title-md">
+<span class="material-symbols-outlined text-[20px]">crisis_alert</span>
+<span>Kesalahan Alokasi VLSM</span>
+</div>
+<p class="font-body-sm text-body-sm font-medium leading-relaxed" id="vlsm-error-detail">
+Terjadi kesalahan alokasi VLSM.
+</p>
+</div>
 <!-- STATE A: VLSM Success Card & Table -->
 <div class="flex flex-col space-y-space-sm" id="vlsm-state-success">
 <!-- Allocation Efficiency Summary Card -->
@@ -377,21 +387,6 @@
 <span class="material-symbols-outlined text-[18px]">add_task</span>
 <span>Load Practice Scenario</span>
 </button>
-</div>
-<!-- STATE C: VLSM Error State Container -->
-<div class="hidden bg-error-container p-space-md rounded-xl text-on-error-container space-y-2" id="vlsm-state-error-banner">
-<div class="flex items-center gap-2 font-title-md text-title-md">
-<span class="material-symbols-outlined text-[20px]">crisis_alert</span>
-<span>Allocation Exceeded Available Space</span>
-</div>
-<p class="font-body-sm text-body-sm leading-relaxed">
-<strong>Allocation Exceeded:</strong> Requested total host requirements (310 hosts) exceed the available capacity of <strong>192.168.1.0/24</strong> (254 usable hosts). Consider expanding your major supernet to <strong>/23</strong> (510 hosts) or reducing department quotas.
-      </p>
-<div class="flex items-center gap-2 pt-1">
-<button class="px-3 py-1.5 rounded-lg bg-on-error-container text-on-error font-body-sm text-body-sm font-medium hover:opacity-90" onclick="document.getElementById('vlsm-supernet-input').value='192.168.0.0/23'; setGlobalDemoState('success');">
-          Auto-expand Supernet to /23
-        </button>
-</div>
 </div>
 </section>
 <!-- Educational Cheatsheet Reference Footer Card -->
@@ -517,6 +512,8 @@
       vlsmSuccess.classList.add('hidden');
       vlsmEmpty.classList.add('hidden');
       vlsmErrorBanner.classList.remove('hidden');
+      const vlsmErrDetail = document.getElementById('vlsm-error-detail');
+      if (vlsmErrDetail) vlsmErrDetail.textContent = 'Kapasitas jaringan induk tidak mencukupi untuk seluruh kebutuhan host.';
       vlsmSupernetInput.value = '192.168.1.0/24';
       vlsmSupernetErr.classList.add('hidden');
     } else {
@@ -539,6 +536,7 @@
         vlsmSupernetInput.value = '192.168.1.0/24';
       }
       handleSubnetCalculate();
+      handleVlsmCalculate();
     }
   }
 
@@ -667,26 +665,89 @@
     nameInput.value = '';
     hostsInput.value = '';
     renderVlsmReqList();
+    handleVlsmCalculate();
   }
 
   function deleteVlsmReq(id) {
     vlsmRequirements = vlsmRequirements.filter(r => r.id !== id);
     renderVlsmReqList();
+    handleVlsmCalculate();
   }
 
-  function handleVlsmCalculate() {
-    const supernetVal = document.getElementById('vlsm-supernet-input').value.trim();
-    if (!supernetVal.includes('/') || supernetVal.split('/').length !== 2) {
-      document.getElementById('vlsm-supernet-error').classList.remove('hidden');
-      return;
-    }
-    document.getElementById('vlsm-supernet-error').classList.add('hidden');
+  async function handleVlsmCalculate() {
+    const supernetInput = document.getElementById('vlsm-supernet-input');
+    const network = supernetInput ? supernetInput.value.trim() : '';
+    const kebutuhan_host = vlsmRequirements.map(r => r.hosts);
 
-    const totalRequestedHosts = vlsmRequirements.reduce((sum, r) => sum + r.hosts, 0);
-    if (totalRequestedHosts > 254 && supernetVal.endsWith('/24')) {
-      setGlobalDemoState('error');
-    } else {
-      setGlobalDemoState('success');
+    const vlsmSuccess = document.getElementById('vlsm-state-success');
+    const vlsmEmpty = document.getElementById('vlsm-state-empty');
+    const vlsmErrorBanner = document.getElementById('vlsm-state-error-banner');
+    const vlsmErrorDetail = document.getElementById('vlsm-error-detail');
+    const vlsmSupernetErr = document.getElementById('vlsm-supernet-error');
+
+    if (vlsmEmpty) vlsmEmpty.classList.add('hidden');
+
+    try {
+      const response = await fetch('/api/vlsm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ network, kebutuhan_host })
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        if (vlsmSuccess) vlsmSuccess.classList.add('hidden');
+        if (vlsmErrorBanner) {
+          vlsmErrorBanner.classList.remove('hidden');
+          if (vlsmErrorDetail) {
+            vlsmErrorDetail.textContent = data.detail || 'Terjadi kesalahan alokasi VLSM.';
+          }
+        }
+        return;
+      }
+
+      if (vlsmErrorBanner) vlsmErrorBanner.classList.add('hidden');
+      if (vlsmSupernetErr) vlsmSupernetErr.classList.add('hidden');
+      if (vlsmSuccess) vlsmSuccess.classList.remove('hidden');
+
+      renderVlsmResults(data);
+    } catch (err) {
+      if (vlsmSuccess) vlsmSuccess.classList.add('hidden');
+      if (vlsmErrorBanner) {
+        vlsmErrorBanner.classList.remove('hidden');
+        if (vlsmErrorDetail) {
+          vlsmErrorDetail.textContent = 'Gagal menghubungi server API: ' + err.message;
+        }
+      }
+    }
+  }
+
+  function renderVlsmResults(allocations) {
+    const container = document.getElementById('vlsm-result-cards');
+    if (!container) return;
+    container.innerHTML = '';
+
+    allocations.forEach((item, idx) => {
+      const card = document.createElement('div');
+      card.className = 'p-space-sm flex flex-col space-y-1';
+      card.innerHTML = `
+        <div class="flex items-center justify-between">
+          <span class="font-title-md text-title-md text-on-surface">${idx + 1}. Subnet (Kebutuhan: ${item.kebutuhan} Host)</span>
+          <span class="px-2 py-0.5 rounded-full bg-primary-fixed text-on-primary-fixed-variant font-label-code-md text-body-sm font-medium">${item.network_cidr} • ${item.usable_hosts} Usable</span>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-x-2 gap-y-1 text-body-sm font-body-sm pt-1">
+          <span class="text-on-surface-variant">Netmask: <strong class="text-on-surface font-label-code-md">${item.mask}</strong></span>
+          <span class="text-on-surface-variant">Network: <strong class="text-on-surface font-label-code-md">${item.network}</strong></span>
+          <span class="text-on-surface-variant">Broadcast: <strong class="text-on-surface font-label-code-md">${item.broadcast || '-'}</strong></span>
+          <span class="col-span-2 sm:col-span-1 text-on-surface-variant">Range Host: <strong class="text-secondary font-label-code-md">${item.first_host} - ${item.last_host}</strong></span>
+        </div>
+      `;
+      container.appendChild(card);
+    });
+
+    const countHeader = document.querySelector('#vlsm-state-success .text-body-sm.text-on-surface-variant');
+    if (countHeader) {
+      countHeader.textContent = `${allocations.length} Subnets generated`;
     }
   }
 
@@ -702,7 +763,7 @@
         { id: '4', name: 'Server Farm Point-to-Point', hosts: 2 }
       ];
       renderVlsmReqList();
-      setGlobalDemoState('success');
+      handleVlsmCalculate();
     }
   }
 
@@ -727,5 +788,6 @@
   window.addEventListener('DOMContentLoaded', () => {
     renderVlsmReqList();
     handleSubnetCalculate();
+    handleVlsmCalculate();
   });
 </script></main><nav class="fixed bottom-0 w-full z-50 pb-safe bg-surface/90 backdrop-blur-xl shadow-[0_-1px_8px_rgba(0,0,0,0.04)]" data-active-classes="text-primary font-headline-sm"><div class="flex justify-around items-center h-16 px-space-sm"><a aria-current="page" class="flex flex-col items-center justify-center gap-0.5 w-16 h-12 transition-colors text-primary font-headline-sm" data-path="calculator" href="#"><span class="material-symbols-outlined text-[22px]">calculate</span><span class="font-body-sm text-body-sm">Subnet</span></a><a class="flex flex-col items-center justify-center gap-0.5 w-16 h-12 text-on-surface-variant hover:text-on-surface transition-colors" data-path="vlsm-planner" href="#"><span class="material-symbols-outlined text-[22px]">account_tree</span><span class="font-body-sm text-body-sm">VLSM</span></a><a class="flex flex-col items-center justify-center gap-0.5 w-16 h-12 text-on-surface-variant hover:text-on-surface transition-colors" data-path="bit-trainer" href="#"><span class="material-symbols-outlined text-[22px]">pin</span><span class="font-body-sm text-body-sm">Binary</span></a><a class="flex flex-col items-center justify-center gap-0.5 w-16 h-12 text-on-surface-variant hover:text-on-surface transition-colors" data-path="lab-cheatsheet" href="#"><span class="material-symbols-outlined text-[22px]">menu_book</span><span class="font-body-sm text-body-sm">Reference</span></a></div></nav></body></html>
