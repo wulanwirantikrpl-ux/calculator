@@ -1,0 +1,7 @@
+services:
+  calculator:
+    build: .
+    container_name: calculator
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
