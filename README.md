@@ -31,3 +31,15 @@ Setelah selesai pengujian, hentikan dan hapus container:
 ```bash
 docker rm -f subnet-app
 ```
+
+## Deploy
+
+Aplikasi ini telah di-deploy ke Vercel dan dapat diakses secara publik melalui tautan berikut:
+- **URL Produksi**: https://calculator-dusky-theta-87.vercel.app/
+
+### Menjalankan Smoke Test di Lingkungan Produksi
+Untuk memvalidasi bahwa seluruh fungsi API dan antarmuka web pada lingkungan produksi berjalan dengan baik, jalankan perintah berikut:
+```bash
+uv run python scripts/smoke_test.py https://calculator-dusky-theta-87.vercel.app/
+```
+
